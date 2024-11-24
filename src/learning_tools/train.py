@@ -57,7 +57,6 @@ def train(
 
     if ddp:
         # wrap model in DDP
-
         model = DDP(model, device_ids=[ddp_local_rank])
 
     dataloader_train: torch.utils.data.DataLoader = load_object(**dataloader_train)

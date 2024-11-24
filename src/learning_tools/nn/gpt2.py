@@ -10,7 +10,7 @@ N_HEAD = 6
 N_EMBD = 768
 
 
-class Rotary(torch.nn.Module):
+class Rotary(nn.Module):
     """
     Implements rotary positional embeddings.
 
@@ -19,15 +19,23 @@ class Rotary(torch.nn.Module):
     inverse frequencies, which are then used to generate sine and cosine
     embeddings.
 
-    Args:
-        dim (int): The dimension of the embeddings.
-        base (float, optional): The base for the frequency calculation. Defaults to 10000.
+    Parameters
+    ----------
+    dim : int
+        The dimension of the embeddings.
+    base : float, optional
+        The base for the frequency calculation. Defaults to 10000.
 
-    Attributes:
-        inv_freq (torch.Tensor): Inverse frequencies used for embedding calculation.
-        seq_len_cached (Optional[int]): Cached sequence length for optimization.
-        cos_cached (Optional[torch.Tensor]): Cached cosine embeddings.
-        sin_cached (Optional[torch.Tensor]): Cached sine embeddings.
+    Attributes
+    ----------
+    inv_freq : torch.Tensor
+        Inverse frequencies used for embedding calculation.
+    seq_len_cached : Optional[int]
+        Cached sequence length for optimization.
+    cos_cached : Optional[torch.Tensor]
+        Cached cosine embeddings.
+    sin_cached : Optional[torch.Tensor]
+        Cached sine embeddings.
     """
 
     def __init__(self, dim: int, base: float = 10000):
@@ -44,12 +52,15 @@ class Rotary(torch.nn.Module):
         This method generates or retrieves cached sine and cosine embeddings
         based on the sequence length of the input tensor.
 
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, ...).
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, seq_len, ...).
 
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: A tuple containing the cosine and sine
-            embeddings, each of shape (1, seq_len, 1, dim//2).
+        Returns
+        -------
+        Tuple[torch.Tensor, torch.Tensor]
+            A tuple containing the cosine and sine embeddings, each of shape (1, seq_len, 1, dim//2).
         """
         seq_len = x.shape[1]
         if seq_len != self.seq_len_cached:
@@ -64,6 +75,23 @@ class Rotary(torch.nn.Module):
 def apply_rotary_emb(
     x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
 ) -> torch.Tensor:
+    """
+    Apply rotary embeddings to the input tensor.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Input tensor of shape (batch_size, seq_len, n_head, head_dim).
+    cos : torch.Tensor
+        Cosine embeddings.
+    sin : torch.Tensor
+        Sine embeddings.
+
+    Returns
+    -------
+    torch.Tensor
+        Tensor with rotary embeddings applied.
+    """
     assert x.ndim == 4  # multihead attention
     d = x.shape[3] // 2
     x1 = x[..., :d]
@@ -74,21 +102,49 @@ def apply_rotary_emb(
 
 
 class CausalSelfAttention(nn.Module):
+    """
+    Causal self-attention mechanism with rotary embeddings.
+
+    Parameters
+    ----------
+    n_head : int, optional
+        Number of attention heads. Defaults to N_HEAD.
+    n_embd : int, optional
+        Embedding dimension. Defaults to N_EMBD.
+    """
+
     def __init__(self, n_head: int = N_HEAD, n_embd: int = N_EMBD):
         super().__init__()
+
         self.n_head = n_head
         self.n_embd = n_embd
         self.head_dim = self.n_embd // self.n_head
+
         assert self.n_embd % self.n_head == 0
+
         self.c_q = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.c_k = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_embd, bias=False)
+
         # output projection
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.c_proj.weight.data.zero_()  # zero init suggested by @Grad62304977
         self.rotary = Rotary(self.head_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass for causal self-attention.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, seq_len, n_embd).
+
+        Returns
+        -------
+        torch.Tensor
+            Output tensor after applying self-attention.
+        """
         B, T, C = (
             x.size()
         )  # batch size, sequence length, embedding dimensionality (n_embd)
@@ -112,6 +168,15 @@ class CausalSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
+    """
+    Multi-layer perceptron used in transformer blocks.
+
+    Parameters
+    ----------
+    n_embd : int, optional
+        Embedding dimension. Defaults to N_EMBD.
+    """
+
     def __init__(self, n_embd: int = N_EMBD):
         super().__init__()
         self.c_fc = nn.Linear(n_embd, 4 * n_embd, bias=False)
@@ -119,6 +184,19 @@ class MLP(nn.Module):
         self.c_proj.weight.data.zero_()  # zero init suggested by @Grad62304977
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass for the MLP.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor.
+
+        Returns
+        -------
+        torch.Tensor
+            Output tensor after applying the MLP.
+        """
         x = self.c_fc(x)
         x = F.relu(
             x
@@ -128,22 +206,57 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
+    """
+    Transformer block consisting of self-attention and MLP layers.
+
+    Parameters
+    ----------
+    n_head : int, optional
+        Number of attention heads. Defaults to N_HEAD.
+    n_embd : int, optional
+        Embedding dimension. Defaults to N_EMBD.
+    """
+
     def __init__(self, n_head: int = N_HEAD, n_embd: int = N_EMBD):
         super().__init__()
         self.attn = CausalSelfAttention(n_head, n_embd)
         self.mlp = MLP(n_embd)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass for the transformer block.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor.
+
+        Returns
+        -------
+        torch.Tensor
+            Output tensor after applying the block.
+        """
         x = x + self.attn(F.rms_norm(x, (x.size(-1),)))
         x = x + self.mlp(F.rms_norm(x, (x.size(-1),)))
         return x
 
 
-# -----------------------------------------------------------------------------
-# The main GPT-2 model
-
-
 class GPT(nn.Module):
+    """
+    GPT-2 model implementation.
+
+    Parameters
+    ----------
+    vocab_size : int, optional
+        Vocabulary size. Defaults to VOCAB_SIZE.
+    n_layer : int, optional
+        Number of transformer layers. Defaults to N_LAYER.
+    n_head : int, optional
+        Number of attention heads. Defaults to N_HEAD.
+    n_embd : int, optional
+        Embedding dimension. Defaults to N_EMBD.
+    """
+
     def __init__(
         self,
         vocab_size: int = VOCAB_SIZE,
@@ -168,11 +281,20 @@ class GPT(nn.Module):
             self.lm_head.weight
         )  # https://paperswithcode.com/method/weight-tying
 
-    def forward(
-        self,
-        idx: torch.Tensor,
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-        # forward the GPT model itself
+    def forward(self, idx: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass for the GPT model.
+
+        Parameters
+        ----------
+        idx : torch.Tensor
+            Input tensor of token indices.
+
+        Returns
+        -------
+        torch.Tensor
+            Logits for each token in the vocabulary.
+        """
         x = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
         for block in self.transformer.h:
             x = block(x)
